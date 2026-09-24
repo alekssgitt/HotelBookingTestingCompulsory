@@ -1,5 +1,3 @@
-# Build, test, and run a SonarCloud scan with Coverlet coverage (OpenCover).
-
 name: BuildTestAndStaticAnalysis
 
 on:
@@ -51,6 +49,7 @@ jobs:
         --target "dotnet"
         --targetargs "test HotelBooking.UnitTests/HotelBooking.UnitTests.csproj --no-build --configuration Debug"
         --include "[HotelBooking.Core]*"
+        --skipautoprops
         -f=opencover
         -o="coverage.xml"
 

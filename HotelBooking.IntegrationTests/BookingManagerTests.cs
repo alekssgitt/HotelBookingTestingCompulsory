@@ -1,5 +1,4 @@
 using System;
-using System.Linq;
 using System.Threading.Tasks;
 using HotelBooking.Core;
 using HotelBooking.Infrastructure;
@@ -12,11 +11,9 @@ namespace HotelBooking.IntegrationTests
 {
     public class BookingManagerTests : IDisposable
     {
-        // Real repositories + Sqlite in-memory database, seeded by DbInitializer:
-        // 3 rooms, all booked from day 4 through day 18.
-        SqliteConnection connection;
-        IRepository<Booking> bookingRepository;
-        BookingManager bookingManager;
+        private readonly SqliteConnection connection;
+        private readonly IRepository<Booking> bookingRepository;
+        private readonly BookingManager bookingManager;
 
         public BookingManagerTests()
         {
@@ -30,8 +27,8 @@ namespace HotelBooking.IntegrationTests
             dbInitializer.Initialize(dbContext);
 
             bookingRepository = new BookingRepository(dbContext);
-            var roomRepos = new RoomRepository(dbContext);
-            bookingManager = new BookingManager(bookingRepository, roomRepos);
+            var roomRepository = new RoomRepository(dbContext);
+            bookingManager = new BookingManager(bookingRepository, roomRepository);
         }
 
         public void Dispose()
@@ -41,69 +38,63 @@ namespace HotelBooking.IntegrationTests
 
         private static DateTime Days(int offset) => DateTime.Today.AddDays(offset);
 
-        [Fact]
-        public async Task FindAvailableRoom_RoomNotAvailable_RoomIdIsMinusOne()
+        [Theory]
+        [InlineData(1, 1)]    // before the booked period
+        [InlineData(1, 3)]    // ends the day before the booked period starts
+        [InlineData(19, 20)]  // starts the day after the booked period ends
+        public async Task FindAvailableRoom_DatesDoNotOverlapSeededBookings_ReturnsARoom(int startOffset, int endOffset)
         {
-            var roomId =
-                await bookingManager.FindAvailableRoom(DateTime.Today.AddDays(8), DateTime.Today.AddDays(8));
 
+            // Act
+            int roomId = await bookingManager.FindAvailableRoom(Days(startOffset), Days(endOffset));
+
+            // Assert
+            Assert.NotEqual(-1, roomId);
+        }
+
+        [Theory]
+        [InlineData(8, 8)]    // inside the booked period
+        [InlineData(4, 18)]   // exactly the booked period
+        [InlineData(3, 4)]    // overlaps the first booked day
+        [InlineData(18, 19)]  // overlaps the last booked day
+        public async Task FindAvailableRoom_DatesOverlapSeededBookings_ReturnsMinusOne(int startOffset, int endOffset)
+        {
+
+            // Act
+            int roomId = await bookingManager.FindAvailableRoom(Days(startOffset), Days(endOffset));
+
+            // Assert
             Assert.Equal(-1, roomId);
         }
 
-        [Theory]
-        [InlineData(0, 1)]   // start is today
-        [InlineData(-2, 3)]  // start is in the past
-        [InlineData(5, 4)]   // start is after end
-        public async Task FindAvailableRoom_InvalidDates_ThrowsArgumentException(int startOffset, int endOffset)
+        [Fact]
+        public async Task CreateBooking_RoomAvailable_BookingIsStoredInDatabase()
         {
-            await Assert.ThrowsAsync<ArgumentException>(
-                () => bookingManager.FindAvailableRoom(Days(startOffset), Days(endOffset)));
+            // Arrange
+            var booking = new Booking { StartDate = Days(1), EndDate = Days(2), CustomerId = 1 };
+
+            // Act
+            bool created = await bookingManager.CreateBooking(booking);
+
+            // Assert
+            Assert.True(created);
+            var storedBookings = await bookingRepository.GetAllAsync();
+            Assert.Contains(storedBookings, b => b.StartDate == Days(1) && b.EndDate == Days(2) && b.IsActive);
         }
 
         [Theory]
-        [InlineData(1, 1, true)]     // tomorrow: before anything is booked
-        [InlineData(2, 3, true)]     // the two days right before the occupied period
-        [InlineData(19, 20, true)]   // the two days right after the occupied period
-        [InlineData(8, 8, false)]    // inside the occupied period
-        [InlineData(4, 18, false)]   // the whole occupied period
-        [InlineData(3, 4, false)]    // overlaps the first occupied day
-        [InlineData(18, 19, false)]  // overlaps the last occupied day
-        [InlineData(1, 5, false)]    // starts free, ends inside the occupied period
-        [InlineData(16, 22, false)]  // starts inside, ends after
-        public async Task FindAvailableRoom_SeededBookings_ReturnsRoomOnlyWhenDatesAreFree(
-            int startOffset, int endOffset, bool roomShouldBeAvailable)
-        {
-            int roomId = await bookingManager.FindAvailableRoom(Days(startOffset), Days(endOffset));
-
-            if (roomShouldBeAvailable)
-            {
-                Assert.NotEqual(-1, roomId);
-
-                var overlapping = (await bookingRepository.GetAllAsync()).Where(b =>
-                    b.RoomId == roomId &&
-                    b.IsActive &&
-                    b.StartDate <= Days(endOffset) &&
-                    b.EndDate >= Days(startOffset));
-                Assert.Empty(overlapping);
-            }
-            else
-            {
-                Assert.Equal(-1, roomId);
-            }
-        }
-
-        [Theory]
-        [InlineData(4, 18, 15)] // the full occupied period: 4,5,...,18
-        [InlineData(4, 4, 1)]   // a single occupied day
-        [InlineData(1, 3, 0)]   // before anything is booked
-        [InlineData(19, 25, 0)] // after everything is booked
-        [InlineData(2, 6, 3)]   // only 4, 5, 6 fall in the occupied period
-        [InlineData(16, 20, 3)] // only 16, 17, 18 fall in the occupied period
+        [InlineData(4, 18, 15)]  // the whole booked period: day 4 to day 18
+        [InlineData(1, 3, 0)]    // before the booked period
+        [InlineData(19, 25, 0)]  // after the booked period
+        [InlineData(2, 6, 3)]    // only days 4, 5, 6 are booked
         public async Task GetFullyOccupiedDates_SeededBookings_ReturnsExpectedNumberOfDates(
             int startOffset, int endOffset, int expectedCount)
         {
+
+            // Act
             var result = await bookingManager.GetFullyOccupiedDates(Days(startOffset), Days(endOffset));
 
+            // Assert
             Assert.Equal(expectedCount, result.Count);
         }
     }

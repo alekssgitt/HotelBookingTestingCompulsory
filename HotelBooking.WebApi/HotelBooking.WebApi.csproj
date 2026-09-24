@@ -30,8 +30,4 @@
     <None Remove="Swashbuckle.AspNetCore.Swagger" />
     <None Remove="Swashbuckle.AspNetCore" />
   </ItemGroup>
-  <ItemGroup>
-    <InternalsVisibleTo Include="HotelBooking.IntegrationTests" />
-    <InternalsVisibleTo Include="HotelBooking.UnitTests" />
-  </ItemGroup>
 </Project>
